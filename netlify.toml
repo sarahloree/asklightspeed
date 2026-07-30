@@ -1,0 +1,34 @@
+# Netlify configuration for the STFS "Ask the Inventory" tool
+#
+# Repo layout:
+#   index.html                 (rename chat.html to index.html)
+#   netlify/functions/ask.js
+#   netlify.toml               (this file)
+#
+# Deploy:
+#   1. Create a NEW GitHub repo (separate from the reorder engine).
+#   2. Put chat.html in as index.html, and ask.js under netlify/functions/.
+#   3. Connect the repo to a new Netlify site.
+#   4. In Netlify > Site settings > Environment variables, add:
+#         ANTHROPIC_API_KEY     your key from console.anthropic.com
+#         SUPABASE_URL          https://zhgfzpztvmazueuxkipm.supabase.co
+#         SUPABASE_SERVICE_KEY  STFS service-role key (Supabase > Settings > API)
+#   5. Deploy. The function is reachable at /.netlify/functions/ask
+#
+# The service-role key is powerful — it bypasses RLS. It lives ONLY in
+# Netlify's environment, never in the repo or the browser. The function
+# only ever calls the twelve ask_* RPCs, so its blast radius is limited
+# to those read-only queries.
+
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "SAMEORIGIN"
+    X-Content-Type-Options = "nosniff"
