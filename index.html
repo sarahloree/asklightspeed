@@ -72,14 +72,14 @@ button.send:disabled{background:var(--steel-300);cursor:default}
 .err{color:#a32020}
 @media(prefers-reduced-motion:reduce){*{animation:none!important}}
 </style>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
 <style>
 #signin{position:fixed;inset:0;z-index:10000;background:#1e293b;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif}
 #signin form{background:#fff;padding:24px;border-radius:10px;width:min(340px,90vw);display:flex;flex-direction:column;gap:10px}
 #signin input{padding:10px;border:1px solid #cbd5e1;border-radius:6px;font-size:15px}
 #signin button{padding:10px;border:0;border-radius:6px;background:#7c2128;color:#fff;font-size:15px;cursor:pointer}
-#signin .msg{color:#b91c1c;font-size:13px;min-height:1em}
-#whoami{position:fixed;right:10px;bottom:10px;z-index:9000;background:#1e293b;color:#e2e8f0;font:12px system-ui,sans-serif;padding:6px 10px;border-radius:8px}
+#signin .signin-msg{color:#b91c1c;font-size:13px;min-height:1em}
+#whoami{position:fixed;right:10px;bottom:7rem;z-index:9000;background:#1e293b;color:#e2e8f0;font:12px system-ui,sans-serif;padding:6px 10px;border-radius:8px;max-width:min(70vw,320px)}
 #whoami button{margin-left:8px;background:#7c2128;color:#fff;border:0;border-radius:6px;padding:3px 8px;cursor:pointer}
 </style>
 </head>
@@ -130,46 +130,68 @@ const ENDPOINT = '/.netlify/functions/ask';
    The Netlify function verifies the access token server-side. */
 const STFD_URL = 'https://qdfwovnhlaaocgawukto.supabase.co';
 const STFD_KEY = 'sb_publishable_PPhYAvIRNnzv7E86s8yw-g_ltVx0Gvk';
-const auth = window.supabase.createClient(STFD_URL, STFD_KEY,
-  { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
+let auth = null;
+try {
+  if (window.supabase && window.supabase.createClient)
+    auth = window.supabase.createClient(STFD_URL, STFD_KEY,
+      { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
+} catch (e) { auth = null; }
 
 async function accessToken(){
-  let { data } = await auth.auth.getSession();
+  if (!auth) return '';
+  let data;
+  try { ({ data } = await auth.auth.getSession()); }
+  catch { return ''; }
   let s = data && data.session;
   if (s && (s.expires_at||0)*1000 < Date.now()+60000) {
-    const r = await auth.auth.refreshSession();
-    if (r.data && r.data.session) s = r.data.session;
+    try {
+      const r = await auth.auth.refreshSession();
+      if (r.data && r.data.session) s = r.data.session;
+    } catch { /* server will reject an expired token */ }
   }
-  return s ? s.access_token : '';
+  return s && s.access_token ? s.access_token : '';
 }
 function showSignIn(msg){
-  if (document.getElementById('signin')) { document.querySelector('#signin .msg').textContent = msg||''; return; }
-  const el = document.createElement('div'); el.id = 'signin';
-  el.innerHTML = '<form><h2 style="margin:0">Sign in</h2>' +
-    '<input type="email" id="si-email" placeholder="Email" autocomplete="username" required>' +
-    '<input type="password" id="si-pass" placeholder="Password" autocomplete="current-password" required>' +
-    '<button type="submit">Sign in</button><div class="msg"></div></form>';
-  document.body.appendChild(el);
-  el.querySelector('.msg').textContent = msg||'';
-  el.querySelector('form').onsubmit = async e => {
-    e.preventDefault();
-    const { error } = await auth.auth.signInWithPassword({
-      email: document.getElementById('si-email').value.trim(),
-      password: document.getElementById('si-pass').value });
-    if (error) { el.querySelector('.msg').textContent = 'Sign-in failed. Check your email and password.'; return; }
-    el.remove(); showWho();
-  };
+  let el = document.getElementById('signin');
+  if (!el) {
+    el = document.createElement('div'); el.id = 'signin';
+    el.innerHTML = '<form><h2 style="margin:0">Sign in</h2>' +
+      '<input type="email" id="si-email" placeholder="Email" autocomplete="username" required>' +
+      '<input type="password" id="si-pass" placeholder="Password" autocomplete="current-password" required>' +
+      '<button type="submit">Sign in</button><div class="signin-msg"></div></form>';
+    document.body.appendChild(el);
+    el.querySelector('form').onsubmit = async e => {
+      e.preventDefault();
+      const note = el.querySelector('.signin-msg');
+      if (!auth) { note.textContent = 'Sign-in is unavailable right now.'; return; }
+      try {
+        const { error } = await auth.auth.signInWithPassword({
+          email: document.getElementById('si-email').value.trim(),
+          password: document.getElementById('si-pass').value });
+        if (error) { note.textContent = 'Sign-in failed. Check your email and password.'; return; }
+        el.remove(); showWho();
+      } catch { note.textContent = 'Sign-in failed. Check your connection and try again.'; }
+    };
+  }
+  el.querySelector('.signin-msg').textContent = msg||'';
+  if (!el.contains(document.activeElement)) {
+    const email = el.querySelector('#si-email');
+    if (email) email.focus();
+  }
 }
 async function showWho(){
-  const { data } = await auth.auth.getSession();
-  const email = data && data.session && data.session.user.email;
-  if (!email) return showSignIn();
-  let w = document.getElementById('whoami');
-  if (!w) { w = document.createElement('div'); w.id='whoami'; document.body.appendChild(w); }
-  w.textContent = email;
-  const b = document.createElement('button'); b.textContent = 'Sign out';
-  b.onclick = async () => { await auth.auth.signOut(); w.remove(); showSignIn(); };
-  w.appendChild(b);
+  if (!auth) return showSignIn('Sign-in is unavailable right now.');
+  try {
+    const { data } = await auth.auth.getSession();
+    const email = data && data.session && data.session.user && data.session.user.email;
+    if (!email) return showSignIn();
+    let w = document.getElementById('whoami');
+    if (!w) { w = document.createElement('div'); w.id='whoami'; document.body.appendChild(w); }
+    w.textContent = email;
+    const b = document.createElement('button'); b.textContent = 'Sign out';
+    b.onclick = async () => { await auth.auth.signOut(); w.remove(); showSignIn(); };
+    w.appendChild(b);
+  } catch { showSignIn('Sign-in is unavailable right now.'); }
 }
 showWho();
 
@@ -262,23 +284,38 @@ async function ask(){
 
   try {
     const token = await accessToken();
-    if (!token) { showSignIn('Please sign in first.'); throw new Error('Not signed in.'); }
+    if (!token) {
+      showSignIn('Please sign in first.');
+      thinking.querySelector('.body').innerHTML =
+        `<span class="err">${render('Please sign in first.')}</span>`;
+      return;
+    }
     const r = await fetch(ENDPOINT, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + token },
       body: JSON.stringify({ question: text })
     });
-    if (r.status === 401) showSignIn('Your session expired. Please sign in again.');
     const data = await r.json().catch(() => ({ error: 'Something went wrong.' }));
-    if (r.status === 403) data.error = data.error || "Your account doesn't have access to Ask Lightspeed yet.";
-    thinking.querySelector('.body').innerHTML =
-      data.answer ? render(data.answer)
-      : `<span class="err">${render(data.error || 'Something went wrong.')}</span>`;
+    const serverError = (data && typeof data.error === 'string' && data.error.trim()) ? data.error : '';
+    if (r.status === 401) {
+      try { await auth.auth.signOut(); } catch { /* still show the form */ }
+      showSignIn('Your session expired. Please sign in again.');
+    }
+    if (!r.ok || !data.answer) {
+      const fallback = r.status === 403
+        ? "Your account doesn't have access to Ask Lightspeed yet."
+        : (r.status === 401 ? 'Your session expired. Please sign in again.' : 'Something went wrong.');
+      thinking.querySelector('.body').innerHTML =
+        `<span class="err">${render(serverError || fallback)}</span>`;
+    } else {
+      thinking.querySelector('.body').innerHTML = render(String(data.answer));
+    }
   } catch (e) {
     thinking.querySelector('.body').innerHTML =
       `<span class="err">Couldn't reach the server. ${render(String(e.message||e))}</span>`;
   } finally {
-    busy = false; send.disabled = false; q.focus();
+    busy = false; send.disabled = false;
+    if (!document.getElementById('signin')) q.focus();
     showSuggestions('Try another:');    // bring chips back under the answer
     stream.scrollTop = stream.scrollHeight;
   }

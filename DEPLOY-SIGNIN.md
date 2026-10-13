@@ -12,9 +12,9 @@ Sign-in uses the STFD Supabase Auth project (`qdfwovnhlaaocgawukto`), the same a
 Leave `ANTHROPIC_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` (STFS data) as they are.
 
 ## Who gets in
-`app_metadata.apps` contains `"asklightspeed"`, **or** the email is in `ASK_ALLOWED_EMAILS`.
+`app_metadata.apps` contains `"asklightspeed"` (one entry in an array, or that exact string), **or** the email is in `ASK_ALLOWED_EMAILS`.
 Everyone else gets 403. No token or a bad token gets 401. Once every user has the `apps` flag, `ASK_ALLOWED_EMAILS` can be emptied.
 
 ## Zero downtime
-If the env vars are missing when this deploys, every question returns 503. Set them first, then merge.
+If `STFD_SUPABASE_URL` or `STFD_SUPABASE_ANON_KEY` is missing when this deploys, every question returns 503, including a POST with no token. Set them first, then merge. A trailing slash on the URL is fine. If STFD Auth itself is unreachable, questions also return 503 rather than a false 401.
 Signed-in users must already have a password in STFD Auth (same one they use for the STFD apps).

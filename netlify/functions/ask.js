@@ -7,7 +7,12 @@
 //   SUPABASE_URL        https://zhgfzpztvmazueuxkipm.supabase.co
 //   SUPABASE_SERVICE_KEY  the STFS service-role key (Settings > API)
 //
-// Set all three in Netlify: Site settings > Environment variables.
+// Sign-in (STFD Auth) also needs, set BEFORE this deploys:
+//   STFD_SUPABASE_URL, STFD_SUPABASE_ANON_KEY (publishable key),
+//   ASK_ALLOWED_EMAILS (optional rollout list).
+// If the STFD URL or publishable key is missing, every POST returns 503.
+//
+// Set them in Netlify: Site settings > Environment variables.
 //
 // Flow: browser question -> Claude picks a tool -> we run the matching
 // Supabase RPC -> Claude phrases the answer -> back to the browser.
@@ -19,26 +24,102 @@ const MODEL = "claude-sonnet-4-6";
 
 // ---- sign-in check (STFD Supabase Auth, project qdfwovnhlaaocgawukto) ----
 // Env: STFD_SUPABASE_URL, STFD_SUPABASE_ANON_KEY (publishable key),
-//      ASK_ALLOWED_EMAILS (optional, comma-separated rollout fallback).
-// Access = app_metadata.apps includes "asklightspeed" OR email in ASK_ALLOWED_EMAILS.
+//      ASK_ALLOWED_EMAILS (optional rollout fallback).
+// Access = app_metadata.apps contains "asklightspeed"
+//          OR email is in ASK_ALLOWED_EMAILS.
+// The user JWT is checked by STFD Auth (GET /auth/v1/user). We never
+// decode it locally, and app_metadata is not something the user can edit.
+function authorizationHeader(event) {
+  const bags = [event && event.headers, event && event.multiValueHeaders];
+  for (const bag of bags) {
+    if (!bag || typeof bag !== "object") continue;
+    for (const key of Object.keys(bag)) {
+      if (key.toLowerCase() !== "authorization") continue;
+      const value = Array.isArray(bag[key]) ? bag[key][0] : bag[key];
+      if (value) return String(value).trim();
+    }
+  }
+  return "";
+}
+
+function bearerToken(header) {
+  const m = /^Bearer\s+(\S+)$/i.exec(header || "");
+  if (!m) return "";
+  // Base64url JWT only, so a crafted header cannot inject extra fields.
+  const token = m[1];
+  if (!/^[A-Za-z0-9_-]+=*\.[A-Za-z0-9_-]+=*\.[A-Za-z0-9_-]+=*$/.test(token)) return "";
+  return token;
+}
+
+function hasAskApp(apps) {
+  const hit = (v) => String(v).trim().toLowerCase() === "asklightspeed";
+  if (Array.isArray(apps)) return apps.some(hit);
+  if (typeof apps === "string") return apps.split(",").some(hit);
+  return false;
+}
+
+function emailAllowed(email) {
+  if (!email) return false;
+  const allow = (process.env.ASK_ALLOWED_EMAILS || "")
+    .toLowerCase()
+    .split(/[,;\s]+/)
+    .map(s => s.trim())
+    .filter(Boolean);
+  return allow.includes(email);
+}
+
+function stfdAuthUrl() {
+  const base = (process.env.STFD_SUPABASE_URL || "").trim();
+  const key = (process.env.STFD_SUPABASE_ANON_KEY || "").trim();
+  if (!base || !key) return { error: "missing" };
+  let url;
+  try { url = new URL(base); }
+  catch { return { error: "bad-url" }; }
+  if (url.protocol !== "https:" || url.username || url.password) return { error: "bad-url" };
+  url.pathname = "/auth/v1/user";
+  url.search = "";
+  url.hash = "";
+  return { url, key };
+}
+
 async function verifyUser(event) {
-  const h = event.headers || {};
-  const m = /^Bearer\s+(.+)$/i.exec(h.authorization || h.Authorization || "");
-  if (!m) return { status: 401 };
-  const base = process.env.STFD_SUPABASE_URL, key = process.env.STFD_SUPABASE_ANON_KEY;
-  if (!base || !key) { console.error("ask: STFD auth env vars missing"); return { status: 500 }; }
+  const cfg = stfdAuthUrl();
+  if (cfg.error) {
+    console.error("ask: STFD auth env vars missing or unusable");
+    return { status: 503 };
+  }
+  const token = bearerToken(authorizationHeader(event));
+  if (!token) return { status: 401 };
   let r;
   try {
-    r = await fetch(`${base}/auth/v1/user`, { headers: { apikey: key, Authorization: `Bearer ${m[1]}` } });
-  } catch (e) { console.error("ask: auth lookup failed", e); return { status: 502 }; }
-  if (!r.ok) return { status: 401 };
-  const user = await r.json();
-  const email = String(user.email || "").toLowerCase();
-  const apps = (user.app_metadata && user.app_metadata.apps) || [];
-  const allow = (process.env.ASK_ALLOWED_EMAILS || "").toLowerCase().split(",").map(s => s.trim()).filter(Boolean);
-  const ok = (Array.isArray(apps) && apps.includes("asklightspeed")) || (email && allow.includes(email));
-  if (!ok) return { status: 403, email };
-  return { status: 200, user: { id: user.id, email, role: (user.app_metadata || {}).app_role || "" } };
+    r = await fetch(cfg.url, {
+      method: "GET",
+      redirect: "manual",
+      headers: { apikey: cfg.key, Authorization: `Bearer ${token}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch (e) {
+    console.error("ask: auth lookup failed", e && (e.name || "error"));
+    return { status: 503 };
+  }
+  // 401/403 from Auth means the token itself is bad. Anything else
+  // (5xx, redirect, HTML) means the check is down, not that the user
+  // should sign in again.
+  if (r.status === 401 || r.status === 403) return { status: 401 };
+  if (!r.ok) {
+    console.error("ask: auth lookup status", r.status);
+    return { status: 503 };
+  }
+  let user;
+  try { user = await r.json(); }
+  catch { console.error("ask: auth response was not JSON"); return { status: 503 }; }
+  if (!user || typeof user !== "object" || typeof user.id !== "string" || !user.id.trim())
+    return { status: 401 };
+  const email = String(user.email || "").trim().toLowerCase();
+  const apps = user.app_metadata && user.app_metadata.apps;
+  if (!hasAskApp(apps) && !emailAllowed(email)) return { status: 403 };
+  const role = user.app_metadata && user.app_metadata.app_role;
+  return { status: 200, user: { id: user.id.trim(), email, role: typeof role === "string" ? role : "" } };
 }
 
 // Light per-user limit: 20 questions per 5 minutes per warm function instance.
@@ -47,11 +128,15 @@ const HITS = new Map();
 function rateLimited(uid) {
   const now = Date.now(), win = 5 * 60 * 1000;
   const h = (HITS.get(uid) || []).filter(t => now - t < win);
-  if (h.length >= 20) return true;
+  if (h.length >= 20) { HITS.set(uid, h); return true; }
   h.push(now); HITS.set(uid, h); return false;
 }
 
-const json = (statusCode, body) => ({ statusCode, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+const json = (statusCode, body) => ({
+  statusCode,
+  headers: { "content-type": "application/json", "cache-control": "no-store" },
+  body: JSON.stringify(body),
+});
 const MAX_TURNS = 5;
 
 // ---- tool catalog: mirrors the eight SQL functions exactly ----------
@@ -164,16 +249,25 @@ exports.handler = async (event) => {
   if (event.httpMethod !== "POST")
     return { statusCode: 405, body: "POST only" };
 
-  const who = await verifyUser(event);
+  let who;
+  try { who = await verifyUser(event); }
+  catch (err) {
+    console.error("ask: sign-in check failed", err && err.message ? err.message : "error");
+    return json(503, { error: "Sign-in check is unavailable right now. Try again shortly." });
+  }
   if (who.status === 401) return json(401, { error: "Please sign in." });
   if (who.status === 403) return json(403, { error: "Your account doesn't have access to Ask Lightspeed yet. Ask Sarah to add you." });
-  if (who.status !== 200) return json(503, { error: "Sign-in check is unavailable right now. Try again shortly." });
+  if (who.status !== 200 || !who.user || !who.user.id)
+    return json(503, { error: "Sign-in check is unavailable right now. Try again shortly." });
   if (rateLimited(who.user.id)) return json(429, { error: "That's a lot of questions at once. Wait a few minutes and try again." });
 
   let question;
   try { question = JSON.parse(event.body).question; } catch { question = null; }
-  if (!question || typeof question !== "string" || question.length > 2000)
-    return { statusCode: 400, body: JSON.stringify({ error: "no question" }) };
+  if (typeof question === "string") question = question.trim();
+  if (!question || typeof question !== "string")
+    return json(400, { error: "no question" });
+  if (question.length > 2000)
+    return json(400, { error: "That question is too long." });
 
   const messages = [{ role: "user", content: question }];
 
@@ -184,8 +278,7 @@ exports.handler = async (event) => {
 
       if (resp.stop_reason !== "tool_use") {
         const text = resp.content.filter(c => c.type === "text").map(c => c.text).join("\n").trim();
-        return { statusCode: 200, headers: { "content-type": "application/json" },
-                 body: JSON.stringify({ answer: text || "I don't have an answer for that." }) };
+        return json(200, { answer: text || "I don't have an answer for that." });
       }
 
       // run every requested tool, feed results back
@@ -199,10 +292,9 @@ exports.handler = async (event) => {
       }
       messages.push({ role: "user", content: results });
     }
-    return { statusCode: 200, headers: { "content-type": "application/json" },
-             body: JSON.stringify({ answer: "That took more steps than expected \u2014 try rephrasing." }) };
+    return json(200, { answer: "That took more steps than expected \u2014 try rephrasing." });
   } catch (err) {
-    console.error("ask: failed for", who.user.email, err);   // details stay in Netlify logs
+    console.error("ask: failed for", who.user.email, err && err.message ? err.message : "error");
     return json(500, { error: "Sorry, something went wrong answering that. Please try again." });
   }
 };

@@ -10,9 +10,14 @@
 #   2. Put chat.html in as index.html, and ask.js under netlify/functions/.
 #   3. Connect the repo to a new Netlify site.
 #   4. In Netlify > Site settings > Environment variables, add:
-#         ANTHROPIC_API_KEY     your key from console.anthropic.com
-#         SUPABASE_URL          https://zhgfzpztvmazueuxkipm.supabase.co
-#         SUPABASE_SERVICE_KEY  STFS service-role key (Supabase > Settings > API)
+#         ANTHROPIC_API_KEY      your key from console.anthropic.com
+#         SUPABASE_URL           https://zhgfzpztvmazueuxkipm.supabase.co
+#         SUPABASE_SERVICE_KEY   STFS service-role key (Supabase > Settings > API)
+#         STFD_SUPABASE_URL      https://qdfwovnhlaaocgawukto.supabase.co
+#         STFD_SUPABASE_ANON_KEY STFD publishable key (also in index.html)
+#         ASK_ALLOWED_EMAILS     comma-separated rollout list
+#      Set the three STFD variables before deploying. If STFD_SUPABASE_URL
+#      or STFD_SUPABASE_ANON_KEY is missing, every question returns 503.
 #   5. Deploy. The function is reachable at /.netlify/functions/ask
 #
 # The service-role key is powerful — it bypasses RLS. It lives ONLY in
