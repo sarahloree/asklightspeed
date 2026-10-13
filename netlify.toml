@@ -25,7 +25,8 @@
   functions = "netlify/functions"
 
 [build.environment]
-  SECRETS_SCAN_OMIT_KEYS = "SUPABASE_URL"
+  # STFD URL + publishable key are intentionally in index.html too.
+  SECRETS_SCAN_OMIT_KEYS = "SUPABASE_URL,STFD_SUPABASE_URL,STFD_SUPABASE_ANON_KEY"
 
 [functions]
   node_bundler = "esbuild"

@@ -16,6 +16,42 @@
 // =====================================================================
 
 const MODEL = "claude-sonnet-4-6";
+
+// ---- sign-in check (STFD Supabase Auth, project qdfwovnhlaaocgawukto) ----
+// Env: STFD_SUPABASE_URL, STFD_SUPABASE_ANON_KEY (publishable key),
+//      ASK_ALLOWED_EMAILS (optional, comma-separated rollout fallback).
+// Access = app_metadata.apps includes "asklightspeed" OR email in ASK_ALLOWED_EMAILS.
+async function verifyUser(event) {
+  const h = event.headers || {};
+  const m = /^Bearer\s+(.+)$/i.exec(h.authorization || h.Authorization || "");
+  if (!m) return { status: 401 };
+  const base = process.env.STFD_SUPABASE_URL, key = process.env.STFD_SUPABASE_ANON_KEY;
+  if (!base || !key) { console.error("ask: STFD auth env vars missing"); return { status: 500 }; }
+  let r;
+  try {
+    r = await fetch(`${base}/auth/v1/user`, { headers: { apikey: key, Authorization: `Bearer ${m[1]}` } });
+  } catch (e) { console.error("ask: auth lookup failed", e); return { status: 502 }; }
+  if (!r.ok) return { status: 401 };
+  const user = await r.json();
+  const email = String(user.email || "").toLowerCase();
+  const apps = (user.app_metadata && user.app_metadata.apps) || [];
+  const allow = (process.env.ASK_ALLOWED_EMAILS || "").toLowerCase().split(",").map(s => s.trim()).filter(Boolean);
+  const ok = (Array.isArray(apps) && apps.includes("asklightspeed")) || (email && allow.includes(email));
+  if (!ok) return { status: 403, email };
+  return { status: 200, user: { id: user.id, email, role: (user.app_metadata || {}).app_role || "" } };
+}
+
+// Light per-user limit: 20 questions per 5 minutes per warm function instance.
+// Not a hard guarantee (instances don't share memory), but it stops runaway loops.
+const HITS = new Map();
+function rateLimited(uid) {
+  const now = Date.now(), win = 5 * 60 * 1000;
+  const h = (HITS.get(uid) || []).filter(t => now - t < win);
+  if (h.length >= 20) return true;
+  h.push(now); HITS.set(uid, h); return false;
+}
+
+const json = (statusCode, body) => ({ statusCode, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 const MAX_TURNS = 5;
 
 // ---- tool catalog: mirrors the eight SQL functions exactly ----------
@@ -128,9 +164,15 @@ exports.handler = async (event) => {
   if (event.httpMethod !== "POST")
     return { statusCode: 405, body: "POST only" };
 
+  const who = await verifyUser(event);
+  if (who.status === 401) return json(401, { error: "Please sign in." });
+  if (who.status === 403) return json(403, { error: "Your account doesn't have access to Ask Lightspeed yet. Ask Sarah to add you." });
+  if (who.status !== 200) return json(503, { error: "Sign-in check is unavailable right now. Try again shortly." });
+  if (rateLimited(who.user.id)) return json(429, { error: "That's a lot of questions at once. Wait a few minutes and try again." });
+
   let question;
   try { question = JSON.parse(event.body).question; } catch { question = null; }
-  if (!question || typeof question !== "string")
+  if (!question || typeof question !== "string" || question.length > 2000)
     return { statusCode: 400, body: JSON.stringify({ error: "no question" }) };
 
   const messages = [{ role: "user", content: question }];
@@ -160,7 +202,7 @@ exports.handler = async (event) => {
     return { statusCode: 200, headers: { "content-type": "application/json" },
              body: JSON.stringify({ answer: "That took more steps than expected \u2014 try rephrasing." }) };
   } catch (err) {
-    return { statusCode: 500, headers: { "content-type": "application/json" },
-             body: JSON.stringify({ error: String(err.message || err) }) };
+    console.error("ask: failed for", who.user.email, err);   // details stay in Netlify logs
+    return json(500, { error: "Sorry, something went wrong answering that. Please try again." });
   }
 };
