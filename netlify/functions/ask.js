@@ -27,6 +27,8 @@ const MODEL = "claude-sonnet-4-6";
 //      ASK_ALLOWED_EMAILS (optional rollout fallback).
 // Access = app_metadata.apps contains "asklightspeed"
 //          OR email is in ASK_ALLOWED_EMAILS.
+// HQ handoff (hq-redeem.js) may mint this same session. It does not grant
+// access by itself: the checks below still apply.
 // The user JWT is checked by STFD Auth (GET /auth/v1/user). We never
 // decode it locally, and app_metadata is not something the user can edit.
 function authorizationHeader(event) {

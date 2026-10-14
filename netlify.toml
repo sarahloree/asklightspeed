@@ -3,6 +3,7 @@
 # Repo layout:
 #   index.html                 (rename chat.html to index.html)
 #   netlify/functions/ask.js
+#   netlify/functions/hq-redeem.js
 #   netlify.toml               (this file)
 #
 # Deploy:
@@ -15,15 +16,23 @@
 #         SUPABASE_SERVICE_KEY   STFS service-role key (Supabase > Settings > API)
 #         STFD_SUPABASE_URL      https://qdfwovnhlaaocgawukto.supabase.co
 #         STFD_SUPABASE_ANON_KEY STFD publishable key (also in index.html)
+#         STFD_SUPABASE_SERVICE_ROLE_KEY  STFD service-role key (hq-redeem only)
 #         ASK_ALLOWED_EMAILS     comma-separated rollout list
-#      Set the three STFD variables before deploying. If STFD_SUPABASE_URL
-#      or STFD_SUPABASE_ANON_KEY is missing, every question returns 503.
-#   5. Deploy. The function is reachable at /.netlify/functions/ask
+#         HQ_HANDOFF_SECRET shared with PJCJ hq-handoff-consume
+#         PJCJ_ANON_KEY          PJCJ publishable key (hq-redeem only)
+#         HQ_CONSUME_URL         optional PJCJ consume URL
+#      Set the STFD URL and publishable key before deploying. If either is
+#      missing, every question returns 503. HQ links also need the handoff
+#      secret, the PJCJ publishable key, and the STFD service-role key.
+#   5. Deploy. Questions are /.netlify/functions/ask.
+#      HQ redeem is /.netlify/functions/hq-redeem.
 #
 # The service-role key is powerful — it bypasses RLS. It lives ONLY in
-# Netlify's environment, never in the repo or the browser. The function
-# only ever calls the twelve ask_* RPCs, so its blast radius is limited
-# to those read-only queries.
+# Netlify's environment, never in the repo or the browser. The ask
+# function only ever calls the twelve ask_* RPCs, so its blast radius is
+# limited to those read-only queries. STFD_SUPABASE_SERVICE_ROLE_KEY is
+# also server-only: hq-redeem uses it to find an existing STFD user and
+# mint a session. It is never sent to the browser or to PJCJ.
 
 [build]
   publish = "."
@@ -31,7 +40,7 @@
 
 [build.environment]
   # STFD URL + publishable key are intentionally in index.html too.
-  SECRETS_SCAN_OMIT_KEYS = "SUPABASE_URL,STFD_SUPABASE_URL,STFD_SUPABASE_ANON_KEY"
+  SECRETS_SCAN_OMIT_KEYS = "SUPABASE_URL,STFD_SUPABASE_URL,STFD_SUPABASE_ANON_KEY,HQ_CONSUME_URL"
 
 [functions]
   node_bundler = "esbuild"
