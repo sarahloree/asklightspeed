@@ -18,7 +18,7 @@
 #         STFD_SUPABASE_ANON_KEY STFD publishable key (also in index.html)
 #         STFD_SUPABASE_SERVICE_ROLE_KEY  STFD service-role key (hq-redeem only)
 #         ASK_ALLOWED_EMAILS     comma-separated rollout list
-#         HQ_STFD_HANDOFF_SECRET shared with PJCJ hq-handoff-consume
+#         HQ_HANDOFF_SECRET shared with PJCJ hq-handoff-consume
 #         PJCJ_ANON_KEY          PJCJ publishable key (hq-redeem only)
 #         HQ_CONSUME_URL         optional PJCJ consume URL
 #      Set the STFD URL and publishable key before deploying. If either is

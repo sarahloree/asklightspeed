@@ -13,7 +13,7 @@
 // be in ASK_ALLOWED_EMAILS.
 //
 // Env (Netlify → Site settings → Environment variables):
-//   HQ_STFD_HANDOFF_SECRET          shared with PJCJ; sent as x-handoff-secret
+//   HQ_HANDOFF_SECRET               sent as the x-handoff-secret header
 //   PJCJ_ANON_KEY                   PJCJ publishable key, sent as apikey
 //   HQ_CONSUME_URL                  optional; defaults to the PJCJ consume function
 //   STFD_SUPABASE_URL               https://qdfwovnhlaaocgawukto.supabase.co
@@ -254,7 +254,7 @@ async function handleRedeem(event, deps) {
     const code = body && body.code;
     if (!isHandoffCode(code)) return invalid(origin);
 
-    const secret = String(deps.getEnv("HQ_STFD_HANDOFF_SECRET") || "").trim();
+    const secret = String(deps.getEnv("HQ_HANDOFF_SECRET") || "").trim();
     const pjcjAnon = String(deps.getEnv("PJCJ_ANON_KEY") || "").trim();
     const anonKey = String(deps.getEnv("STFD_SUPABASE_ANON_KEY") || "").trim();
     const serviceKey = String(deps.getEnv("STFD_SUPABASE_SERVICE_ROLE_KEY") || "").trim();

@@ -17,7 +17,7 @@ Set these before HQ links will sign anyone in. A missing value makes redeem retu
 
 | Name | Value |
 |---|---|
-| `HQ_STFD_HANDOFF_SECRET` | Shared secret with PJCJ `hq-handoff-consume`. Sent only as the `x-handoff-secret` header. |
+| `HQ_HANDOFF_SECRET` | Shared secret with PJCJ `hq-handoff-consume`. Sent only as the `x-handoff-secret` header. |
 | `PJCJ_ANON_KEY` | PJCJ publishable key (project `inmodrxuivjmypzvygzi`). Sent only as `apikey` on the consume call. |
 | `STFD_SUPABASE_SERVICE_ROLE_KEY` | Service-role key for STFD Auth (`qdfwovnhlaaocgawukto`). Server only. Never the STFS data key. |
 | `HQ_CONSUME_URL` | Optional. Defaults to `https://inmodrxuivjmypzvygzi.supabase.co/functions/v1/hq-handoff-consume`. |

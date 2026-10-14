@@ -8,7 +8,7 @@ const { handleRedeem, INVALID, APP_KEY, BUSINESS, DEFAULT_CONSUME_URL } = requir
 
 const CODE = "a".repeat(43);
 const KEYS = [
-  "HQ_STFD_HANDOFF_SECRET",
+  "HQ_HANDOFF_SECRET",
   "PJCJ_ANON_KEY",
   "HQ_CONSUME_URL",
   "STFD_SUPABASE_URL",
@@ -18,7 +18,7 @@ const KEYS = [
 
 function env(extra) {
   const base = {
-    HQ_STFD_HANDOFF_SECRET: "handoff-secret-value",
+    HQ_HANDOFF_SECRET: "handoff-secret-value",
     PJCJ_ANON_KEY: "pjcj-publishable-test\n",
     HQ_CONSUME_URL: "",
     STFD_SUPABASE_URL: "https://qdfwovnhlaaocgawukto.supabase.co/rest/v1/",
@@ -154,7 +154,7 @@ test("hq redeem and the page handoff", async () => {
     assert.equal(res.statusCode, 401);
     assert.equal(calls.length, 0);
 
-    res = await post(undefined, {}, noFetch, { HQ_STFD_HANDOFF_SECRET: "" });
+    res = await post(undefined, {}, noFetch, { HQ_HANDOFF_SECRET: "" });
     assert.equal(res.statusCode, 401);
     assert.equal(calls.length, 0);
 
