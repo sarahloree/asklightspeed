@@ -127,9 +127,45 @@ const ENDPOINT = '/.netlify/functions/ask';
 
 /* ---- STFD sign-in (same Supabase Auth project as the STFD apps) ----
    The publishable key only identifies the project; it is safe in the browser.
-   The Netlify function verifies the access token server-side. */
+   The Netlify function verifies the access token server-side.
+
+   HQ handoff: a link may open with #handoff=CODE. The name is "handoff" so it
+   does not collide with supabase-js detectSessionInUrl, which reads
+   #access_token and ?code. The fragment is removed before createClient and
+   before any request. /.netlify/functions/hq-redeem returns a normal session
+   for an existing STFD user. Ask access is still checked server-side
+   (app_metadata.apps asklightspeed, or ASK_ALLOWED_EMAILS). Any failure
+   keeps today's session, or the password form. */
 const STFD_URL = 'https://qdfwovnhlaaocgawukto.supabase.co';
 const STFD_KEY = 'sb_publishable_PPhYAvIRNnzv7E86s8yw-g_ltVx0Gvk';
+
+// Taken and removed before createClient. detectSessionInUrl may clear the
+// hash, and a later request must not carry the one-time code. Other hash
+// params stay so a recovery link can still be picked up.
+const HANDOFF_CODE = (function () {
+  const raw = (location.hash || '').replace(/^#/, '');
+  if (!raw) return '';
+  let params;
+  try { params = new URLSearchParams(raw); } catch (e) { return ''; }
+  if (!params.has('handoff')) return '';
+  const code = params.get('handoff') || '';
+  params.delete('handoff');
+  const rest = params.toString();
+  const nextUrl = location.pathname + (location.search || '') + (rest ? '#' + rest : '');
+  try { history.replaceState(history.state, '', nextUrl); } catch (e) { return ''; }
+  if (!/^[A-Za-z0-9_-]{43}$/.test(code)) return '';
+  return code;
+})();
+
+// Captured after the handoff fragment is gone, before the client starts.
+const PASSWORD_SETUP = (function () {
+  const raw = (location.hash || '').replace(/^#/, '');
+  if (!raw) return false;
+  let type = '';
+  try { type = new URLSearchParams(raw).get('type') || ''; } catch (e) {}
+  return type === 'recovery' || type === 'invite';
+})();
+
 let auth = null;
 try {
   if (window.supabase && window.supabase.createClient)
@@ -151,6 +187,35 @@ async function accessToken(){
   }
   return s && s.access_token ? s.access_token : '';
 }
+
+async function redeemHandoff(code){
+  if (!auth) return null;
+  const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, 8000);
+  try {
+    const res = await fetch('/.netlify/functions/hq-redeem', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: code }),
+      signal: ctrl ? ctrl.signal : undefined
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data || typeof data.access_token !== 'string' || typeof data.refresh_token !== 'string') return null;
+    if (!data.access_token || !data.refresh_token) return null;
+    const set = await auth.auth.setSession({
+      access_token: data.access_token,
+      refresh_token: data.refresh_token
+    });
+    if (!set || set.error || !set.data || !set.data.session) return null;
+    return set.data.session;
+  } catch (e) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function showSignIn(msg){
   let el = document.getElementById('signin');
   if (!el) {
@@ -193,7 +258,14 @@ async function showWho(){
     w.appendChild(b);
   } catch { showSignIn('Sign-in is unavailable right now.'); }
 }
-showWho();
+// A failed redeem leaves whatever session is already stored, then the
+// password form if there is none. Password sign-in stays the fallback.
+const authReady = (async function () {
+  try {
+    if (HANDOFF_CODE && !PASSWORD_SETUP) await redeemHandoff(HANDOFF_CODE);
+  } catch (e) { /* password form is the fallback */ }
+  await showWho();
+})();
 
 const STARTERS = [
   "How much 8 foot HDG commercial post do we have?",
@@ -274,6 +346,7 @@ function bubble(role, html){
 async function ask(){
   const text = q.value.trim();
   if (!text || busy) return;
+  try { await authReady; } catch (e) { /* showWho already fell back */ }
   const old = document.getElementById('suggest');
   if (old) old.remove();                // hide chips while answering
   busy = true; send.disabled = true;
