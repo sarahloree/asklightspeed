@@ -106,7 +106,7 @@ button.send:disabled{background:var(--steel-300);cursor:default}
 
     <div class="msg ai">
       <div class="avatar">AI</div>
-      <div class="body">Ask me about stock levels, what needs reordering, sales, dead stock, or supplier spend. A few to try:</div>
+      <div class="body">Ask me about stock levels, what needs reordering, sales, a job number, dead stock, or supplier spend. A few to try:</div>
     </div>
     <div class="suggest" id="suggest"></div>
   </div>
@@ -273,7 +273,9 @@ const STARTERS = [
   "What's our total inventory worth?",
   "What isn't selling that we should clear out?",
   "How were sales last month vs the month before?",
-  "How much have we spent with Binford this year?"
+  "How much have we spent with Binford this year?",
+  "What went out for job #2309?",
+  "What did STFD buy last month?"
 ];
 
 const stream = document.getElementById('stream');
