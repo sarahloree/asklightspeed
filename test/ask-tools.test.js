@@ -7,6 +7,8 @@ const root = path.join(__dirname, "..");
 const ask = fs.readFileSync(path.join(root, "netlify/functions/ask.js"), "utf8");
 const jobSql = fs.readFileSync(path.join(root, "sql/ask_by_job_ref.sql"), "utf8");
 const stfdSql = fs.readFileSync(path.join(root, "sql/ask_stfd_purchases.sql"), "utf8");
+const pastSql = fs.readFileSync(path.join(root, "sql/ask_past_quote_template.sql"), "utf8");
+const page = fs.readFileSync(path.join(root, "index.html"), "utf8");
 
 test("ask.js wires job-number and STFD purchase tools", () => {
   assert.match(ask, /name:\s*"by_job_ref"/);
@@ -30,8 +32,60 @@ test("ask.js wires job-number and STFD purchase tools", () => {
   assert.doesNotMatch(ask, /service_role/);
 });
 
+test("past quote template is a draft pick list, locked down like the other ask_* functions", () => {
+  assert.match(ask, /name:\s*"past_quote_template"/);
+  assert.match(ask, /rpc:\s*"ask_past_quote_template"/);
+  assert.match(ask, /p_job_ref:\s*b\.job_ref/);
+  assert.match(ask, /p_quote/);
+  assert.match(ask, /p_scale_from/);
+  assert.match(ask, /p_scale_to/);
+  assert.match(ask, /scale_from/);
+  assert.match(ask, /scale_to/);
+  assert.match(ask, /not the official pull list/i);
+  assert.match(ask, /STFD calculator and job packet/);
+  assert.match(ask, /150 ft/);
+  assert.match(ask, /past-quote template/);
+  assert.doesNotMatch(ask, /sb_secret_/);
+  assert.doesNotMatch(ask, /service_role/);
+
+  assert.match(pastSql, /function public\.ask_past_quote_template\(/);
+  assert.match(pastSql, /p_job_ref text/);
+  assert.match(pastSql, /p_quote text default null/);
+  assert.match(pastSql, /p_scale_from numeric default null/);
+  assert.match(pastSql, /p_scale_to numeric default null/);
+  assert.match(pastSql, /ls_quote_lines/);
+  assert.match(pastSql, /ls_inventory/);
+  assert.match(pastSql, /'qty_template'/);
+  assert.match(pastSql, /'qty_scaled'/);
+  assert.match(pastSql, /'on_hand'/);
+  assert.match(pastSql, /'shortfall'/);
+  assert.match(pastSql, /'CREATED'/);
+  assert.match(pastSql, /latest quote that is not void/i);
+  assert.match(pastSql, /Draft only/);
+  assert.match(pastSql, /not the official pull list/);
+  assert.match(pastSql, /STFD calculator and job packet/);
+  assert.match(pastSql, /stable/i);
+  assert.match(pastSql, /security definer/i);
+  assert.match(pastSql, /set search_path to 'public', 'pg_temp'/i);
+  assert.match(pastSql, /returns jsonb/i);
+  assert.match(pastSql, /revoke all on function/i);
+  assert.match(pastSql, /from anon/i);
+  assert.match(pastSql, /from authenticated/i);
+  assert.match(pastSql, /grant execute on function/i);
+  assert.match(pastSql, /to service_role/i);
+  assert.doesNotMatch(pastSql, /\binsert\s+into\b/i);
+  assert.doesNotMatch(pastSql, /\bupdate\s+[a-z_]+\s+set\b/i);
+  assert.doesNotMatch(pastSql, /\bdelete\s+from\b/i);
+  assert.doesNotMatch(pastSql, /service_role_key/i);
+  assert.doesNotMatch(pastSql, /sb_secret_/);
+
+  assert.match(page, /Draft a pick list from job #2309/);
+  assert.match(page, /STFD calculator and job packet/);
+  assert.match(page, /max-width:720px/);
+});
+
 test("SQL files are read-only and follow the ask_* lockdown", () => {
-  for (const sql of [jobSql, stfdSql]) {
+  for (const sql of [jobSql, stfdSql, pastSql]) {
     assert.match(sql, /stable/i);
     assert.match(sql, /security definer/i);
     assert.match(sql, /set search_path to 'public', 'pg_temp'/i);
