@@ -17,7 +17,7 @@
 // Flow: browser question -> Claude picks a tool -> we run the matching
 // Supabase RPC -> Claude phrases the answer -> back to the browser.
 // Claude never sees the DB keys and never writes SQL; it can only call
-// the eight fixed tools below.
+// the fixed read-only tools below.
 // =====================================================================
 
 const MODEL = "claude-sonnet-4-6";
@@ -141,7 +141,7 @@ const json = (statusCode, body) => ({
 });
 const MAX_TURNS = 5;
 
-// ---- tool catalog: mirrors the eight SQL functions exactly ----------
+// ---- tool catalog: mirrors the SQL functions exactly ----------------
 const TOOLS = [
   { name: "stock_on_hand",
     description: "Current stock on hand, cost and price for a product. Use for questions like 'how much X do we have', 'are we out of Y'. Pass a SKU or part of a product name.",
@@ -176,9 +176,22 @@ const TOOLS = [
     rpc: "ask_top_sales", args: b => ({ p_by: b.by || "product", p_months: b.months || 12 }) },
 
   { name: "stfd_purchases",
-    description: "What South Texas Fence & Deck (STFD) bought from the supply store over a period, with margin. Use for 'what did STFD buy', 'our margin on STFD', 'STFD sales last month'. months default 1.",
-    input_schema: { type: "object", properties: { months: { type: "integer", description: "period length in months, default 1" } } },
-    rpc: "ask_stfd_purchases", args: b => ({ p_months: b.months || 1 }) },
+    description: "What South Texas Fence & Deck (STFD) bought from the supply store, with margin. Use for 'what did STFD buy', 'our margin on STFD', 'STFD sales last month', 'STFD bought SKU 37001 last month', 'what SKUs did STFD buy between two dates'. With only months (default 1) the result is the period rollup plus top items. Pass from and/or to as YYYY-MM-DD to override months (those dates are inclusive, America/Chicago). Pass sku (a SKU or product-name fragment) to limit the rollup to that product. Set detail true, or pass sku, when the answer needs the individual sale lines rather than only the period rollup.",
+    input_schema: { type: "object", properties: {
+      months: { type: "integer", description: "Lookback in months when from and to are omitted. Default 1." },
+      from: { type: "string", description: "Optional start date YYYY-MM-DD, inclusive, America/Chicago. Overrides months." },
+      to: { type: "string", description: "Optional end date YYYY-MM-DD, inclusive, America/Chicago. Overrides months." },
+      sku: { type: "string", description: "Optional SKU or product name fragment, e.g. '37001' or 'cattle panel'." },
+      detail: { type: "boolean", description: "True to include sale lines (date, invoice, SKU, quantity, dollars). Also included when sku is set." }
+    } },
+    rpc: "ask_stfd_purchases", args: b => {
+      const out = { p_months: b.months || 1 };
+      if (typeof b.from === "string" && b.from.trim()) out.p_from = b.from.trim();
+      if (typeof b.to === "string" && b.to.trim()) out.p_to = b.to.trim();
+      if (typeof b.sku === "string" && b.sku.trim()) out.p_sku = b.sku.trim();
+      if (b.detail === true) out.p_detail = true;
+      return out;
+    } },
 
   { name: "sales_trend",
     description: "Total sales for a recent period compared with the period before it. Use for 'how were sales last month', 'sales vs last month', 'are we up or down'. months default 1.",
@@ -200,6 +213,13 @@ const TOOLS = [
     input_schema: { type: "object", properties: { query: { type: "string" }, months: { type: "integer" } }, required: ["query"] },
     rpc: "ask_inventory_turn", args: b => ({ p_query: b.query, p_months: b.months || 3 }) },
 
+  { name: "by_job_ref",
+    description: "What sold and what is still quoted for one job number from the Lightspeed note (an Invoice2go-style number already stored on the sale or quote). Use for 'what went out for #2309', 'what sold on job 2309', 'open quote for C2219', 'what is quoted for S2287'. Pass the job number only: 2309 (residential), C2219 (commercial), or S2287 (subcontractor). A leading # is fine. Do not use this for stock-on-hand or for a SKU. This does not look up Invoice2go, and it is not the quote-to-pull-list calculator. Closed sales are what sold. Quotes with status CREATED are still open. CONVERTED and ARCHIVED quotes are not open.",
+    input_schema: { type: "object", properties: {
+      job_ref: { type: "string", description: "Job number, e.g. 2309, #2309, C2219, or S2287." }
+    }, required: ["job_ref"] },
+    rpc: "ask_by_job_ref", args: b => ({ p_job_ref: b.job_ref || null }) },
+
   { name: "customer_credit",
     description: "Customer store credit, account balances, or outstanding AR. Use for any question about how much credit a customer or STFD has, balances owed, or amounts on account. This data is not yet connected; the tool returns an honest explanation.",
     input_schema: { type: "object", properties: { query: { type: "string" } } },
@@ -208,7 +228,9 @@ const TOOLS = [
 
 const SYSTEM = `You are the assistant for South Texas Fence Supply (STFS). You answer questions about the store's Lightspeed inventory and sales data by calling the provided tools. Rules:
 
-- Only answer from tool results. Never invent numbers. If no tool fits the question, say plainly that you can't answer that one yet and name what you CAN help with (stock levels, reorder needs, restock cost, dead stock, unreliable counts, top customers or products, STFD purchases, sales trends).
+- Only answer from tool results. Never invent numbers. If no tool fits the question, say plainly that you can't answer that one yet and name what you CAN help with (stock levels, reorder needs, restock cost, dead stock, unreliable counts, top customers or products, STFD purchases including a SKU or date range, sales trends, and what sold or is still quoted for a job number).
+- A job number is not a SKU. 2309, C2219, and S2287 (a leading # is fine) are job numbers from the Lightspeed note. Use the job-number tool for what went out or what is still quoted. Closed sales are what sold. A quote still open has status CREATED; CONVERTED or ARCHIVED is not an open quote.
+- For what STFD bought, pass a SKU and/or from/to dates when the question names a product or a specific range. Otherwise leave those off and months defaults to 1 (the period rollup).
 - Keep answers short and concrete. Lead with the number, then a sentence of context. Format money as US dollars.
 - The data is still being tuned: some supplier lead times are estimates and about a hundred products have unreliable counts. When a tool result carries a caveat, pass it on honestly rather than hiding it.
 - Never mention SQL, tables, tools, or how you got the answer. Just answer like a knowledgeable colleague.
