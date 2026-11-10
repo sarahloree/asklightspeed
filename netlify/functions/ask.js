@@ -141,6 +141,12 @@ const json = (statusCode, body) => ({
 });
 const MAX_TURNS = 5;
 
+function finiteNumber(v) {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))) return Number(v);
+  return null;
+}
+
 // ---- tool catalog: mirrors the SQL functions exactly ----------------
 const TOOLS = [
   { name: "stock_on_hand",
@@ -214,11 +220,29 @@ const TOOLS = [
     rpc: "ask_inventory_turn", args: b => ({ p_query: b.query, p_months: b.months || 3 }) },
 
   { name: "by_job_ref",
-    description: "What sold and what is still quoted for one job number from the Lightspeed note (an Invoice2go-style number already stored on the sale or quote). Use for 'what went out for #2309', 'what sold on job 2309', 'open quote for C2219', 'what is quoted for S2287'. Pass the job number only: 2309 (residential), C2219 (commercial), or S2287 (subcontractor). A leading # is fine. Do not use this for stock-on-hand or for a SKU. This does not look up Invoice2go, and it is not the quote-to-pull-list calculator. Closed sales are what sold. Quotes with status CREATED are still open. CONVERTED and ARCHIVED quotes are not open.",
+    description: "What sold and what is still quoted for one job number from the Lightspeed note (an Invoice2go-style number already stored on the sale or quote). Use for 'what went out for #2309', 'what sold on job 2309', 'open quote for C2219', 'what is quoted for S2287'. Pass the job number only: 2309 (residential), C2219 (commercial), or S2287 (subcontractor). A leading # is fine. Do not use this for stock-on-hand or for a SKU. This does not look up Invoice2go. For a draft pick list of materials from a past quote, with on-hand and an optional scale, use past_quote_template instead. That draft is still not the official pull list. Closed sales are what sold. Quotes with status CREATED are still open. CONVERTED and ARCHIVED quotes are not open.",
     input_schema: { type: "object", properties: {
       job_ref: { type: "string", description: "Job number, e.g. 2309, #2309, C2219, or S2287." }
     }, required: ["job_ref"] },
     rpc: "ask_by_job_ref", args: b => ({ p_job_ref: b.job_ref || null }) },
+
+  { name: "past_quote_template",
+    description: "Draft pick list from a similar past Lightspeed quote for a job number. Returns each SKU with the quote quantity (qty_template), the scaled quantity (qty_scaled), current on-hand, and the shortfall. Use for 'materials from a past quote like job 2309', 'draft a pick list from #2309', 'what would we pull if we did C2219 again', or 'scale that 150 ft quote down to 100 ft'. Pass job_ref (2309, #2309, C2219, S2287). Pass quote only when they name a Lightspeed short code or quote id. Pass scale_from and scale_to together, both greater than zero (for example 150 and 100), only when they want every quantity scaled; leave both off otherwise. This is a template only. It is not the official pull list, it does not write anything to Lightspeed, and it does not call Invoice2go. The quantity a new job needs still commits on the STFD calculator and job packet. Prefer this over the job-number tool when they want a pick list. An open quote has status CREATED; otherwise the latest quote that is not void is used.",
+    input_schema: { type: "object", properties: {
+      job_ref: { type: "string", description: "Past job number, e.g. 2309, #2309, C2219, or S2287." },
+      quote: { type: "string", description: "Optional Lightspeed quote short code or quote id, e.g. 3534." },
+      scale_from: { type: "number", description: "Past size the quote was written for, e.g. 150 feet. Applied only when scale_to is also set." },
+      scale_to: { type: "number", description: "New size to scale the draft quantities toward, e.g. 100 feet. Applied only when scale_from is also set." }
+    }, required: ["job_ref"] },
+    rpc: "ask_past_quote_template", args: b => {
+      const out = { p_job_ref: b.job_ref || null };
+      if (typeof b.quote === "string" && b.quote.trim()) out.p_quote = b.quote.trim();
+      const scaleFrom = finiteNumber(b.scale_from);
+      const scaleTo = finiteNumber(b.scale_to);
+      if (scaleFrom !== null) out.p_scale_from = scaleFrom;
+      if (scaleTo !== null) out.p_scale_to = scaleTo;
+      return out;
+    } },
 
   { name: "customer_credit",
     description: "Customer store credit, account balances, or outstanding AR. Use for any question about how much credit a customer or STFD has, balances owed, or amounts on account. This data is not yet connected; the tool returns an honest explanation.",
@@ -228,8 +252,9 @@ const TOOLS = [
 
 const SYSTEM = `You are the assistant for South Texas Fence Supply (STFS). You answer questions about the store's Lightspeed inventory and sales data by calling the provided tools. Rules:
 
-- Only answer from tool results. Never invent numbers. If no tool fits the question, say plainly that you can't answer that one yet and name what you CAN help with (stock levels, reorder needs, restock cost, dead stock, unreliable counts, top customers or products, STFD purchases including a SKU or date range, sales trends, and what sold or is still quoted for a job number).
+- Only answer from tool results. Never invent numbers. If no tool fits the question, say plainly that you can't answer that one yet and name what you CAN help with (stock levels, reorder needs, restock cost, dead stock, unreliable counts, top customers or products, STFD purchases including a SKU or date range, sales trends, what sold or is still quoted for a job number, and a draft pick list from a past quote).
 - A job number is not a SKU. 2309, C2219, and S2287 (a leading # is fine) are job numbers from the Lightspeed note. Use the job-number tool for what went out or what is still quoted. Closed sales are what sold. A quote still open has status CREATED; CONVERTED or ARCHIVED is not an open quote.
+- When they want materials from a similar past quote, a draft pick list, or a past job scaled to a new size (for example 150 ft down to 100 ft), use the past-quote template. Say that it is a draft. The Lightspeed quote is not the official pull list. The quantity the new job needs still commits on the STFD calculator and job packet. Pass scale_from and scale_to only when both sizes are in the question. Pass a quote short code only when they name one.
 - For what STFD bought, pass a SKU and/or from/to dates when the question names a product or a specific range. Otherwise leave those off and months defaults to 1 (the period rollup).
 - Keep answers short and concrete. Lead with the number, then a sentence of context. Format money as US dollars.
 - The data is still being tuned: some supplier lead times are estimates and about a hundred products have unreliable counts. When a tool result carries a caveat, pass it on honestly rather than hiding it.
